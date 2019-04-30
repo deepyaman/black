@@ -1363,6 +1363,13 @@ class Line:
         first = next(leaves)
         res = f"{first.prefix}{indent}{first.value}"
         for leaf in leaves:
+            if (
+                leaf.type == token.RPAR
+                and leaf.value == ")"
+                and hasattr(leaf, "was_optional")
+            ):
+                if leaf.opening_bracket in self.leaves:
+                    leaf.value = leaf.opening_bracket.value = ""
             res += str(leaf)
         for comment in itertools.chain.from_iterable(self.comments.values()):
             res += str(comment)
@@ -1632,6 +1639,14 @@ class LineGenerator(Visitor[Line]):
         """Remove a semicolon and put the other statement on a separate line."""
         yield from self.line()
 
+    def visit_LPAR(self, leaf: Leaf) -> Iterator[Line]:
+        ensure_visible(leaf)
+        yield from self.visit_default(leaf)
+
+    def visit_RPAR(self, leaf: Leaf) -> Iterator[Line]:
+        ensure_visible(leaf)
+        yield from self.visit_default(leaf)
+
     def visit_ENDMARKER(self, leaf: Leaf) -> Iterator[Line]:
         """End of file. Process outstanding comments and end with a newline."""
         yield from self.visit_default(leaf)
@@ -1646,12 +1661,18 @@ class LineGenerator(Visitor[Line]):
         """You are in a twisty little maze of passages."""
         v = self.visit_stmt
         Ø: Set[str] = set()
-        self.visit_assert_stmt = partial(v, keywords={"assert"}, parens={"assert", ","})
+        self.visit_assert_stmt = partial(
+            v, keywords={"assert"}, parens={"assert", ","}
+        )
         self.visit_if_stmt = partial(
             v, keywords={"if", "else", "elif"}, parens={"if", "elif"}
         )
-        self.visit_while_stmt = partial(v, keywords={"while", "else"}, parens={"while"})
-        self.visit_for_stmt = partial(v, keywords={"for", "else"}, parens={"for", "in"})
+        self.visit_while_stmt = partial(
+            v, keywords={"while", "else"}, parens={"while"}
+        )
+        self.visit_for_stmt = partial(
+            v, keywords={"for", "else"}, parens={"for", "in"}
+        )
         self.visit_try_stmt = partial(
             v, keywords={"try", "except", "else", "finally"}, parens=Ø
         )
@@ -2347,7 +2368,9 @@ def right_hand_split(
                     "Splitting failed, body is still too long and can't be split."
                 )
 
-            elif head.contains_multiline_strings() or tail.contains_multiline_strings():
+            elif (
+                head.contains_multiline_strings() or tail.contains_multiline_strings()
+            ):
                 raise CannotSplit(
                     "The current optional pair of parentheses is bound to fail to "
                     "satisfy the splitting algorithm because the head or the tail "
@@ -2798,7 +2821,9 @@ def convert_one_fmt_off_pair(node: Node) -> bool:
                     if first_idx is None:
                         first_idx = index
                 assert parent is not None, "INTERNAL ERROR: fmt: on/off handling (1)"
-                assert first_idx is not None, "INTERNAL ERROR: fmt: on/off handling (2)"
+                assert (
+                    first_idx is not None
+                ), "INTERNAL ERROR: fmt: on/off handling (2)"
                 parent.insert_child(
                     first_idx,
                     Leaf(
@@ -3005,8 +3030,12 @@ def ensure_visible(leaf: Leaf) -> None:
     :func:`normalize_invible_parens` and :func:`visit_import_from`).
     """
     if leaf.type == token.LPAR:
+        if leaf.value == "":
+            setattr(leaf, "was_optional", True)
         leaf.value = "("
     elif leaf.type == token.RPAR:
+        if leaf.value == "":
+            setattr(leaf, "was_optional", True)
         leaf.value = ")"
 
 
@@ -3186,7 +3215,9 @@ def gen_python_files_in_dir(
 
     `report` is where output about exclusions goes.
     """
-    assert root.is_absolute(), f"INTERNAL ERROR: `root` must be absolute but is {root}"
+    assert (
+        root.is_absolute()
+    ), f"INTERNAL ERROR: `root` must be absolute but is {root}"
     for child in path.iterdir():
         try:
             normalized_path = "/" + child.resolve().relative_to(root).as_posix()
@@ -3714,7 +3745,10 @@ def write_cache(cache: Cache, sources: Iterable[Path], mode: FileMode) -> None:
     cache_file = get_cache_file(mode)
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        new_cache = {**cache, **{src.resolve(): get_cache_info(src) for src in sources}}
+        new_cache = {
+            **cache,
+            **{src.resolve(): get_cache_info(src) for src in sources},
+        }
         with tempfile.NamedTemporaryFile(dir=str(cache_file.parent), delete=False) as f:
             pickle.dump(new_cache, f, protocol=pickle.HIGHEST_PROTOCOL)
         os.replace(f.name, cache_file)
